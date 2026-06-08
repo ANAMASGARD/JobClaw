@@ -1,0 +1,95 @@
+# Progress Tracker
+
+> **Purpose:** Living status — checkboxes, prize checklist, decisions log. **Update after every feature.**  
+> **Read when:** Start and end of every session — always know what is done and what is next.  
+> **What to build:** `build-plan.md` · **How to build:** `code-standards.md`
+
+Update after every completed feature. Any agent reading this should know what is done and what is next.
+
+**Project:** JobClaw — MetaMask x 1Shot x Venice AI Dev Cook Off  
+**Submission deadline:** June 15, 2026
+
+---
+
+## Current Status
+
+**Phase:** Phase 0 — Not started  
+**Last completed:** RetroUI theme + component library scaffold  
+**Next:** Phase 0 — Deploy jobclaw-openclaw + Convex init
+
+---
+
+## Progress
+
+### Phase 0 — OpenClaw Backend
+
+- [ ] 00 Prerequisites (Venice, 1Shot, Browserbase, Exa, Convex, Web3Auth accounts)
+- [ ] 01 Deploy jobclaw-openclaw via vclaw + Venice config + verify
+
+### Phase 1 — Foundation
+
+- [ ] 02 Convex schema + dashboard shell
+- [ ] 03 RetroUI landing page
+- [ ] 04 Web3Auth login + redirect to onboarding
+- [ ] 04b MetaMask connect-wallet + SIWE upgrade
+
+### Phase 2 — Onchain Onboarding
+
+- [ ] 05 Onboarding — resume + job preferences + consent
+- [ ] 06 Smart Accounts Kit + ERC-7715 + 7702 via 1Shot
+
+### Phase 3 — Agent Pipeline
+
+- [ ] 07 OpenClaw client + Venice rank
+- [ ] 08 Exa + LinkedIn job discovery
+- [ ] 08b Brave Search + analyze-url route
+- [ ] 09 x402 + 1Shot on hunt/apply/analyze routes
+- [ ] 10 Browserbase apply + Venice personalization (LinkedIn, Greenhouse, direct URLs)
+- [ ] 11 Hunt orchestration (Convex actions: jobHunt + analyzeAndApply)
+
+### Phase 4 — Dashboard
+
+- [ ] 12 Main dashboard + live logs
+- [ ] 13 Hunt control page
+- [ ] 14 Onchain panel
+- [ ] 15 Application detail page
+
+### Phase 5 — Demo Hardening
+
+- [ ] 16 Pre-seed applications + demo rehearsal
+- [ ] 17 Mainnet relayer for final demo video (1Shot prize)
+
+---
+
+## Prize-Track Checklist
+
+- [ ] Smart Accounts Kit visible in demo video main flow
+- [ ] ERC-7715 Advanced Permissions grant recorded
+- [ ] Venice model id shown in UI during rank/apply
+- [ ] x402 payment with tx hash on dashboard
+- [ ] 1Shot relayer tx (7702 + 7710) on onchain panel
+- [ ] Autonomous apply with screenshot proof
+- [ ] Live Convex agent logs during hunt
+
+---
+
+## Decisions Made During Build
+
+_Add decisions here as implementation progresses._
+
+| Date | Decision | Reason |
+|------|----------|--------|
+| — | Web3Auth first for onboarding, MetaMask upgrade for hackathon onchain | Lower friction entry; Kit still in demo |
+| — | Browser automation in jobclaw, not OpenClaw | Hosted OpenClaw cannot run arbitrary skills |
+| — | Venice via OpenClaw for rank; Venice via Stagehand for form fill | Latency + prize visibility |
+| — | LinkedIn + user URL apply via Browserbase | JobPilot-style scope restored |
+| — | Brave Search + Venice personalization before apply | Tailored resume + cover letter per job |
+
+---
+
+## Notes
+
+- Vercel **Hobby** is sufficient for hackathon demo
+- Pre-warm OpenClaw sandbox ~10 min before judging
+- Demo video: **MetaMask path only**
+- Old JobPilot/InsForge context files replaced June 2026
