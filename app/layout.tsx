@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Archivo_Black, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
+import { Web3Provider } from "@/providers/Web3Provider";
 
 const archivoBlack = Archivo_Black({
   subsets: ["latin"],
@@ -36,7 +37,9 @@ export default function RootLayout({
         space.variable,
       )}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <Web3Provider>{children}</Web3Provider>
+      </body>
     </html>
   );
 }

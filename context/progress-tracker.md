@@ -14,8 +14,8 @@ Update after every completed feature. Any agent reading this should know what is
 ## Current Status
 
 **Phase:** Phase 1 — Foundation (in progress)  
-**Last completed:** Phase 1 · 03 RetroUI landing page (dark, pony.studio-inspired hero + agents section + dancing reviews + chair CTA + footer)  
-**Next:** Phase 0 · 01 Deploy jobclaw-openclaw + Neo4j init (prerequisite accounts first)
+**Last completed:** Web3Auth + MetaMask SDK full setup — packages, env files, providers, auth API routes, Neo4j client, SIWE, Smart Accounts Kit, proxy route protection  
+**Next:** Phase 0 · 00 Create accounts (Web3Auth dashboard, Neo4j Aura, Venice, Browserbase, Exa, Brave, 1Shot) → fill `.env.local` → Phase 1 · 04 `/login` page
 
 ---
 
@@ -83,6 +83,9 @@ _Add decisions here as implementation progresses._
 | 2026-06-13 | Landing page: pony.studio-inspired dark hero, no feature cards, one giant headline + rotating figures strip | Judges should feel the product brand immediately; remove "AI slop" |
 | 2026-06-13 | Dancer clips (`/public/dancers/`) are pony.studio placeholder assets — **must replace before public launch** | Prototyping velocity; original footage needed for release |
 | 2026-06-13 | All assets self-hosted in `public/` — zero external CDN hits at runtime | Offline-safe demo; no CDN cold-start risk during judging |
+| 2026-06-13 | `middleware.ts` renamed to `proxy.ts` with `proxy` function — Next.js 16 breaking change | Middleware is deprecated in Next.js 16; must use proxy convention |
+| 2026-06-13 | Web3Auth v11 uses `chains: []` array not legacy `chainConfig`; wagmi v3 + `metaMask()` connector | Verified against installed node_modules type defs before writing |
+| 2026-06-13 | Web3Auth provider uses `mounted` guard to skip SSR — prevents `WalletInitializationError` with empty clientId during build | Web3Auth only runs in the browser; SSR pre-render must be skipped |
 | — | Web3Auth first for onboarding, MetaMask upgrade for hackathon onchain | Lower friction entry; Kit still in demo |
 | — | Browser automation in jobclaw, not OpenClaw | Hosted OpenClaw cannot run arbitrary skills |
 | — | Venice via OpenClaw for rank; Venice via Stagehand for form fill | Latency + prize visibility |
