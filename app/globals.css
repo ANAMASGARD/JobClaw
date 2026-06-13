@@ -145,3 +145,50 @@
     @apply font-sans;
   }
 }
+
+/* ── Auto-rotating figure strip (pony.studio-style seamless marquee) ── */
+@keyframes jobclaw-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    /* Track holds two identical copies; shift by exactly one copy for a seamless loop */
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.marquee-track {
+  display: flex;
+  align-items: flex-end;
+  width: max-content;
+  animation: jobclaw-marquee var(--marquee-duration, 60s) linear infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
+}
+
+/* ── Floating dancers (pony.studio reviews-style scatter) ── */
+@keyframes dancer-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-14px);
+  }
+}
+
+.dancer-float {
+  animation: dancer-float var(--float-dur, 6s) ease-in-out infinite;
+  animation-delay: var(--float-delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dancer-float {
+    animation: none;
+  }
+}

@@ -48,7 +48,11 @@ Install more: `npx shadcn@latest add -y @retroui/{name}`
 
 ## App Components
 
-_Empty until built. Add entries as features ship._
+### FigureStrip
+- **File:** components/landing/FigureStrip.tsx
+- **Tokens:** none — hero is pure black (`bg-black`) to match the pony.studio reference exactly
+- **RetroUI deps:** none (pure CSS marquee + `next/image`)
+- **Notes:** Large, bottom-anchored, seamlessly auto-rotating row of `/images/jobclaw-figures.png` (transparent PNG). 4 `next/image` copies (first `priority`); `.marquee-track` animates `translate3d(0 → -50%)` via `@keyframes jobclaw-marquee` in `globals.css`. Honors `prefers-reduced-motion`. Verified live-scrolling in headless Chrome.
 
 ### Template entry
 
@@ -66,7 +70,7 @@ _Empty until built. Add entries as features ship._
 
 | Route | Status | Key components |
 |-------|--------|----------------|
-| `/` | Not started | Hero, HowItWorks, SponsorBadges |
+| `/` | ✅ Hero + agents section | Pony-style hero (nav, giant headline, auto-rotating FigureStrip) → "agents multiply" section (autoplay video + bot render in neobrutalist rounded cards, then reduced highlight heading) → DancingReviews (pony-style scatter of 11 looping dancer videos in `/public/dancers` + client testimonial) → "Pull up a chair" CTA ending (neobrutalist pill buttons + career-chair image in a subtle tilted rounded frame) → full footer (brand + social pills + Product/Company/Resources columns + oversized JOBCLAW wordmark + legal bar). Dancer clips are placeholder pony.studio assets — replace before launch. Brand favicon (crab) wired via `app/icon.png`/`app/favicon.ico`/`app/apple-icon.png` + dark `app/manifest.ts` |
 | `/login` | Not started | Web2LoginButton, MetaMaskLoginButton |
 | `/onboarding` | Not started | ResumeUpload, JobPreferencesForm |
 | `/onboarding/permissions` | Not started | PermissionStepper, DelegationExplainer |

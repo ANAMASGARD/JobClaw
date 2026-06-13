@@ -13,9 +13,9 @@ Update after every completed feature. Any agent reading this should know what is
 
 ## Current Status
 
-**Phase:** Phase 0 — Not started  
-**Last completed:** RetroUI theme + component library scaffold  
-**Next:** Phase 0 — Deploy jobclaw-openclaw + Neo4j init
+**Phase:** Phase 1 — Foundation (in progress)  
+**Last completed:** Phase 1 · 03 RetroUI landing page (dark, pony.studio-inspired hero + agents section + dancing reviews + chair CTA + footer)  
+**Next:** Phase 0 · 01 Deploy jobclaw-openclaw + Neo4j init (prerequisite accounts first)
 
 ---
 
@@ -29,7 +29,7 @@ Update after every completed feature. Any agent reading this should know what is
 ### Phase 1 — Foundation
 
 - [ ] 02 Neo4j schema + dashboard shell
-- [ ] 03 RetroUI landing page
+- [x] 03 RetroUI landing page
 - [ ] 04 Web3Auth login + redirect to onboarding
 - [ ] 04b MetaMask connect-wallet + SIWE upgrade
 
@@ -80,6 +80,9 @@ _Add decisions here as implementation progresses._
 
 | Date | Decision | Reason |
 |------|----------|--------|
+| 2026-06-13 | Landing page: pony.studio-inspired dark hero, no feature cards, one giant headline + rotating figures strip | Judges should feel the product brand immediately; remove "AI slop" |
+| 2026-06-13 | Dancer clips (`/public/dancers/`) are pony.studio placeholder assets — **must replace before public launch** | Prototyping velocity; original footage needed for release |
+| 2026-06-13 | All assets self-hosted in `public/` — zero external CDN hits at runtime | Offline-safe demo; no CDN cold-start risk during judging |
 | — | Web3Auth first for onboarding, MetaMask upgrade for hackathon onchain | Lower friction entry; Kit still in demo |
 | — | Browser automation in jobclaw, not OpenClaw | Hosted OpenClaw cannot run arbitrary skills |
 | — | Venice via OpenClaw for rank; Venice via Stagehand for form fill | Latency + prize visibility |

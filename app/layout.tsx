@@ -31,7 +31,7 @@ export default function RootLayout({
     <html
       lang="en"
       className={cn(
-        "h-full antialiased font-sans",
+        "dark h-full antialiased font-sans",
         archivoBlack.variable,
         space.variable,
       )}
