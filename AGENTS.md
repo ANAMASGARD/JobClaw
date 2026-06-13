@@ -18,10 +18,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 |---|---|
 | **Product** | Autonomous job agent — discover, personalize, apply with onchain audit trail |
 | **Hackathon** | MetaMask Smart Accounts Kit × 1Shot × Venice AI (deadline **June 15, 2026**) |
-| **Repos** | `jobclaw` (this) + `jobclaw-openclaw` (Venice reasoning only) |
+| **Repos** | `jobclaw` (Neo4j website + RAG API) + `jobclaw-openclaw` (Venice + agentic RAG tools) |
 | **Auth flow** | Web3Auth onboard → MetaMask upgrade → ERC-7715 delegation |
 | **Demo must show** | Smart Accounts Kit + Venice model id + x402 tx hash + agent logs + apply screenshot |
 | **State** | Phase 0 not started — see `context/progress-tracker.md` |
+| **Database** | **Neo4j** (required) — powers **entire website** + agent graph + RAG context; Vercel Blob for files — **not Convex** |
 | **Match threshold** | `70` in `lib/utils.ts` — never hardcode |
 | **Venice default** | `venice/kimi-k2-5` via OpenClaw; fallback `venice/zai-org-glm-5` |
 
@@ -42,8 +43,9 @@ JobClaw is a decentralized autonomous job-hunting SaaS where a user explicitly o
 - **MetaMask SDK + Smart Accounts Kit** for smart account creation/usage and **Advanced Permissions (ERC-7715)** so the user can delegate limited autonomy to the agent.
 - **1Shot Permissionless Relayer** for EIP-7702 upgrade and EIP-7710 transaction execution with stablecoin gas abstraction, which is central to the hackathon's relayer and x402 tracks.
 - **x402 payment-gated actions** so certain agent actions are machine-payable and visibly tied to delegated wallet permissions, which is exactly what the x402 + ERC-7710 track is asking for.
-- **Convex** as the operational backbone for database, files, realtime UI sync, actions, and cron-like recurring orchestration.
-- **OpenClaw hosted separately** as the reasoning control plane, using **Venice AI** as the core LLM provider through OpenAI-compatible endpoints. Venice is private by default for many supported models, and OpenClaw explicitly supports Venice with `venice/kimi-k2-5` as a strong default.
+- **Neo4j** as the graph database backbone — **powers every website page** plus users, jobs, applications, agent runs, onchain events, and **relationships** (skills, apply history, match paths). OpenClaw retrieves context via **Agentic RAG** (`/api/rag/*`). **Required — do not use Convex.**
+- **Vercel Blob** for resume PDFs, cover letters, screenshots (Neo4j stores URLs + metadata only).
+- **OpenClaw hosted separately** as the reasoning control plane, using **Venice AI** with **agentic RAG** — Venice autonomously calls jobclaw RAG tools to retrieve user profile, skills, and job context from Neo4j before ranking and personalizing.
 - **Browserbase + Stagehand** for real browser execution — LinkedIn job search/apply, Greenhouse/Lever, and direct company career URLs.
 - **Brave Search API** for enriching user-pasted official job posting URLs with company and role context before Browserbase analysis.
 - **Exa** for broad job discovery and retrieval.
@@ -57,8 +59,8 @@ The product pitch is:
 
 Every implementation choice must reinforce the judge story. The demo must visibly prove these four ideas:
 
-1. **Best Agent** — JobClaw autonomously discovers, ranks, and applies to jobs while writing durable Convex logs and application records.
-2. **Best Use of Venice AI** — Venice is in the main reasoning path through OpenClaw, not a side feature; it powers matching, planning, and dynamic application answers.
+1. **Best Agent** — JobClaw autonomously discovers, ranks, and applies to jobs while writing durable Neo4j agent logs and application graph records.
+2. **Best Use of Venice AI** — Venice uses **agentic RAG** against Neo4j (skill match, apply history) through OpenClaw; not a side feature.
 3. **Best x402 + ERC-7710** — protected hunt/apply endpoints return HTTP 402, and delegated permissions drive the corresponding payment behavior.
 4. **Best Use of 1Shot Permissionless Relayer** — 1Shot relays the critical upgrade/execution transactions and webhook-driven status updates should be preferred over polling.
 
@@ -75,7 +77,9 @@ Owns:
 - MetaMask/Web3Auth login surfaces (Web3Auth first, MetaMask upgrade second)
 - `personal_sign` verification flow
 - Smart Accounts Kit onboarding UI
-- Convex schema, queries, mutations, actions, files, crons
+- Neo4j graph schema, Cypher repositories, constraints/indexes (`lib/neo4j/`)
+- **Agentic RAG API** (`lib/rag/`, `app/api/rag/*`) — Neo4j retrieval for OpenClaw Venice agent
+- Vercel Blob for file artifacts (resume, cover letter, screenshots)
 - x402 middleware and 1Shot relayer/facilitator integrations
 - Browserbase + Stagehand execution (LinkedIn, Greenhouse, direct URLs)
 - Brave Search API for URL-based job analysis
@@ -85,7 +89,8 @@ Owns:
 ### Repo 2 — `jobclaw-openclaw`
 Owns:
 - OpenClaw control plane deployment
-- Venice provider configuration
+- Venice provider configuration + **tool calling** for agentic RAG
+- RAG tool manifest (`tools/rag-tools.json`) → jobclaw `/api/rag/*`
 - reasoning-only orchestration endpoint(s)
 - model selection and agent routing
 
@@ -114,9 +119,8 @@ Then additionally before touching specific areas:
 11. MetaMask Smart Accounts Kit docs — smart account / delegation
 12. Venice OpenClaw provider docs — AI / provider config
 13. 1Shot hackathon + relayer docs — x402, 7702, 7710
-14. **Convex MCP** (`user-convex`) — schema, functions, runtime logs, test queries — before/after editing `convex/`
-15. Convex docs (Context7) — API patterns when MCP is not enough
-16. Browserbase / Stagehand docs — automation
+14. **Neo4j** — Context7 `/neo4j/neo4j-javascript-driver` + `architecture.md` (Graph Model) — before editing `lib/neo4j/`
+15. Browserbase / Stagehand docs — automation
 
 ## Rules That Never Change
 
@@ -165,14 +169,13 @@ Load before editing: **nextjs**, **vercel-functions**, **deployments-cicd**, **e
 
 | MCP | Use for |
 |-----|---------|
-| **Convex** (`user-convex`) | Live schema, function specs, run queries/mutations, action logs, env vars — **before/after editing `convex/`** |
-| **Context7** (`user-context7`) | Library API docs — Convex patterns, Web3Auth, MetaMask Kit, Stagehand, x402, Venice |
-| **Vercel** (`plugin-vercel-vercel`) | Deploy, build logs, runtime logs, platform docs |
+| **Context7** (`user-context7`) | Library API docs — **Neo4j**, Web3Auth, MetaMask Kit, Stagehand, x402, Venice |
+| **Vercel** (`plugin-vercel-vercel`) | Deploy, build logs, runtime logs, Vercel Blob |
 | **Cursor IDE Browser** | Demo rehearsal / manual UI test only — not production apply |
 
 - **Next.js / Vercel** — local docs in `node_modules/next/dist/docs/` + Vercel plugin `nextjs` skill.
 - **MetaMask / Smart Accounts Kit** — ERC-7715, EIP-7702, EIP-7710, signature flows, wallet UX.
-- **Convex** — use **Convex MCP** (`user-convex`) for live schema, `functionSpec`, `run`, and `logs`; Context7 for API docs when needed.
+- **Neo4j** — graph model in `architecture.md`; Cypher in `lib/neo4j/repositories/`; **never expose driver to client**.
 - **Browserbase / Stagehand** — session lifecycle, selectors, replays (see global **browser** skill).
 
 ## Product Modes
@@ -226,7 +229,7 @@ When implementing user-facing flows, preserve this order unless the user request
 ### Frontend
 - Use Next.js App Router cleanly.
 - Separate server and client components correctly.
-- Keep API routes thin; push long-running work into Convex actions.
+- Keep API routes thin; long-running hunt/apply runs in `lib/jobs/` (server-only), status polled via Neo4j-backed API.
 - Design UI so every prize-critical action is visible and understandable to judges.
 
 ### Authentication
@@ -236,11 +239,19 @@ When implementing user-facing flows, preserve this order unless the user request
 - `personal_sign` login is separate from delegation grant.
 - Users may also connect MetaMask directly on `/login` and skip Web3Auth.
 
-### Convex
-- Convex is the source of truth for agent state, application logs, onchain logs, browser sessions, and realtime UI.
-- Prefer append-only event logs plus derived views.
-- Store raw external payloads when useful for debugging/judge evidence.
-- Prefer Convex actions/crons over long Vercel functions for hackathon simplicity.
+### Neo4j (graph database — required)
+
+- Neo4j is the **source of truth** for users, jobs, applications, agent runs, onchain logs, and relationships.
+- All DB access via `lib/neo4j/` — **server-side only** (API routes, Server Actions, `lib/jobs/`). Never in client components.
+- Use Cypher repositories, not raw driver calls scattered in routes.
+- Append `LogEntry` nodes to `AgentRun` — never overwrite log history.
+- Graph relationships power matching narrative: `(Resume)-[:HAS_SKILL]->(Skill)<-[:REQUIRES]-(JobListing)`.
+- Live dashboard: client polls `/api/agent-runs/[id]` (SWR, ~2s) during active hunts — no Convex realtime.
+
+### Files (Vercel Blob)
+
+- Resume PDFs, personalized resumes, cover letters, apply screenshots → **Vercel Blob**.
+- Neo4j stores `blobUrl` on nodes — not binary data in the graph.
 
 ### OpenClaw + Venice
 - OpenClaw is a separate backend reasoning service.
@@ -309,7 +320,7 @@ README and demo docs must always explain:
 - how MetaMask permissions are used
 - where 1Shot is used
 - where Venice is used
-- what Convex stores and syncs
+- what Neo4j stores (graph + relationships) and what Vercel Blob stores (files)
 - why the dual-repo split exists
 
 ## When Writing Code
@@ -332,6 +343,7 @@ Before implementing, always ask internally:
 - Mixing browser automation ownership into OpenClaw.
 - Making the dashboard look like a generic admin panel with no judge-story cues.
 - Adding unsupported claims like “fully autonomous for everyone” before embedded-wallet delegation is proven.
+- Using **Convex** — replaced by **Neo4j** (required).
 - Using outdated Next.js patterns without checking installed docs first.
 
 ## Recovery Triggers
@@ -340,7 +352,7 @@ Run `/recover` immediately if:
 - wallet connection works but signature verification keeps failing after one fix
 - smart account / delegation flow breaks after one attempted correction
 - x402 flow loops between 402 and retry unexpectedly
-- Convex schema drift causes repeated query/mutation mismatches
+- Neo4j Cypher/schema drift causes repeated query mismatches
 - Browserbase flow becomes unstable after one selector correction
 - OpenClaw/Venice integration fails after one configuration correction
 

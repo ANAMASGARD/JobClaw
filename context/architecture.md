@@ -1,6 +1,6 @@
 # Architecture
 
-> **Purpose:** Technical source of truth — stack, flows, Convex schema, env vars, deployment, skills/MCP inventory.  
+> **Purpose:** Technical source of truth — stack, flows, **Neo4j graph model**, env vars, deployment, skills/MCP inventory.  
 > **Read when:** Backend work, integrations, auth, onchain, agent pipeline, deploy.  
 > **Product scope:** `project-overview.md` · **Code patterns:** `code-standards.md` · **Library usage:** `library-docs.md`  
 > **Glossary:** `context/README.md`
@@ -21,14 +21,16 @@ Every AI agent must read **`AGENTS.md`** first, then **`context/README.md`**, th
 6. [System Boundaries & Ownership](#system-boundaries--ownership)
 7. [Runtime Architecture](#runtime-architecture)
 8. [Data Flows](#data-flows)
-9. [Convex Schema](#convex-schema)
-10. [Authentication & Authorization](#authentication--authorization)
-11. [Onchain & x402 Layer](#onchain--x402-layer)
-12. [Agent Pipeline (Discovery → Apply)](#agent-pipeline-discovery--apply)
-13. [Environment Variables](#environment-variables)
-14. [Deployment & Infrastructure](#deployment--infrastructure)
-15. [Prize-Track → Component Mapping](#prize-track--component-mapping)
-16. [Invariants](#invariants)
+9. [Neo4j for the Website](#neo4j-for-the-website)
+10. [Agentic RAG — OpenClaw + Neo4j](#agentic-rag--openclaw--neo4j)
+11. [Neo4j Graph Model](#neo4j-graph-model)
+12. [Authentication & Authorization](#authentication--authorization)
+13. [Onchain & x402 Layer](#onchain--x402-layer)
+14. [Agent Pipeline (Discovery → Apply)](#agent-pipeline-discovery--apply)
+15. [Environment Variables](#environment-variables)
+16. [Deployment & Infrastructure](#deployment--infrastructure)
+17. [Prize-Track → Component Mapping](#prize-track--component-mapping)
+18. [Invariants](#invariants)
 
 ---
 
@@ -45,11 +47,13 @@ flowchart TB
   subgraph JobClawRepo["jobclaw (this repo — Vercel)"]
     API[Thin API Routes]
     MW[x402 Middleware]
-    Convex[(Convex DB + Files + Realtime)]
+    Neo4j[(Neo4j Graph DB)]
+    Blob[(Vercel Blob — files)]
     Auto[Browserbase + Stagehand]
     Brave[Brave Search API]
     Exa[Exa API]
     OCClient[OpenClaw HTTP Client]
+    RAG[Agentic RAG API /api/rag/*]
   end
 
   subgraph OpenClawRepo["jobclaw-openclaw (separate Vercel project)"]
@@ -68,21 +72,25 @@ flowchart TB
   W3A --> API
   MM --> API
   API --> MW
-  MW --> Convex
-  Convex --> Auto
-  Convex --> Brave
-  Convex --> Exa
-  Convex --> OCClient
+  MW --> Neo4j
+  Neo4j --> Auto
+  Neo4j --> Brave
+  Neo4j --> Exa
+  Neo4j --> OCClient
+  Neo4j --> RAG
+  RAG --> OCClient
   OCClient --> Sandbox
   Sandbox --> Venice
+  Venice -.->|tool calls| RAG
   MM --> SA
   MW --> OneShot
   OneShot --> X402
-  Convex --> OneShot
-  Auto --> Convex
+  Neo4j --> OneShot
+  Auto --> Neo4j
+  Auto --> Blob
 ```
 
-**Core principle:** UI and thin routes live in Next.js. All durable state and long-running work live in Convex actions. Reasoning lives in OpenClaw + Venice. Browser execution lives in Browserbase — never in OpenClaw.
+**Core principle:** UI and thin routes live in Next.js. All durable state lives in **Neo4j** (graph + relationships). Files live in **Vercel Blob**. Long-running hunt/apply runs in `lib/jobs/` (server-only). Reasoning lives in OpenClaw + Venice. Browser execution lives in Browserbase — never in OpenClaw.
 
 ---
 
@@ -97,10 +105,12 @@ flowchart TB
 | Smart accounts | MetaMask Smart Accounts Kit | ERC-7715 | Scoped delegation for autonomous agent |
 | Onchain relay | 1Shot Permissionless Relayer | EIP-7702 + 7710 | Upgrade + delegated execution, USDC gas |
 | Payments | x402 + 1Shot facilitator | HTTP 402 | Micropayments on hunt / apply / analyze-url |
-| Database | Convex | — | Schema, queries, mutations, actions, files, crons |
-| Realtime UI | Convex `useQuery` | — | Live agent logs, application status |
-| Agent brain | OpenClaw | `@vercel/vclaw` | Reasoning sandbox (separate repo) |
-| LLM | Venice AI | `venice/kimi-k2-5` | Match, personalize, form answers |
+| Database | **Neo4j** | 5.x (Aura or self-hosted) | **Required** — graph DB for all app state + relationships |
+| File storage | Vercel Blob | `@vercel/blob` | Resume PDFs, cover letters, screenshots (URLs in Neo4j) |
+| Live UI updates | SWR polling | ~2s during active hunt | `GET /api/agent-runs/[id]` — no client-side Neo4j |
+| Agent brain | OpenClaw | `@vercel/vclaw` | Reasoning sandbox + **agentic RAG** tool loop |
+| LLM | Venice AI | `venice/kimi-k2-5` | Match, personalize, form answers — **retrieves from Neo4j via RAG** |
+| Knowledge / RAG | **Neo4j graph** | Cypher + RAG API | **Required** — website data + OpenClaw retrieval context |
 | Job discovery | Exa + LinkedIn | `exa-js` + Browserbase | Broad search + board browsing |
 | URL analysis | Brave Search + Browserbase | REST API | User-pasted official job URLs |
 | Browser automation | Browserbase + Stagehand | Venice as LLM | Search, extract, fill, submit |
@@ -108,7 +118,7 @@ flowchart TB
 | Chain (dev) | Base Sepolia | chainId `84532` | x402 dev payments |
 | Chain (demo video) | Base mainnet | chainId `8453` | **Required for 1Shot relayer prize** |
 
-**Removed — do not use:** InsForge, Adzuna, PostHog, Clerk, Neon, OpenAI GPT-4o as primary model.
+**Removed — do not use:** InsForge, Adzuna, PostHog, Clerk, Neon, **Convex**, OpenAI GPT-4o as primary model.
 
 ---
 
@@ -116,8 +126,8 @@ flowchart TB
 
 | Repo | Create / Deploy | Owns | Must NOT own |
 |------|-----------------|------|--------------|
-| **`jobclaw`** (this repo) | Vercel git push or `vercel deploy` | Next.js UI, Convex, x402, Browserbase, Exa, Brave, Web3Auth, MetaMask onboarding, demo dashboard | Venice config, OpenClaw sandbox lifecycle |
-| **`jobclaw-openclaw`** | `npx @vercel/vclaw create` | OpenClaw gateway, Venice provider, reasoning endpoints | Browserbase, Stagehand, Convex writes |
+| **`jobclaw`** (this repo) | Vercel git push or `vercel deploy` | Next.js **website**, **Neo4j** (all pages + agent data), **Agentic RAG API** (`/api/rag/*`), Vercel Blob, x402, Browserbase | Venice config, OpenClaw sandbox lifecycle |
+| **`jobclaw-openclaw`** | `npx @vercel/vclaw create` | OpenClaw gateway, Venice provider, **agentic RAG tool orchestration** (calls jobclaw RAG API) | Browserbase, Stagehand, direct Neo4j writes |
 
 ```bash
 # OpenClaw repo bootstrap (run once, separate directory)
@@ -137,7 +147,7 @@ After create: configure Venice (`venice/kimi-k2-5`), allowlist `api.venice.ai` i
 AI agents must use installed **skills** and **MCP servers** before guessing APIs. Authority order:
 
 ```
-AGENTS.md → context/architecture.md (this file) → installed skill → Convex MCP (schema/runtime) OR Context7 MCP (API docs) → context/library-docs.md → training data
+AGENTS.md → context/architecture.md (this file) → installed skill → Context7 MCP (Neo4j driver docs) → context/library-docs.md → training data
 ```
 
 ### Required reading
@@ -216,42 +226,24 @@ MCP tools are available in Cursor. **Read tool schema in `mcps/<server>/tools/` 
 
 | MCP Server | Identifier | Required for | JobClaw tasks |
 |------------|------------|--------------|---------------|
-| **Convex** | `user-convex` | **Yes — schema, functions, runtime** | Inspect tables/schema, function specs, run queries/mutations/actions, read UDF logs, env vars, debug actions |
-| **Context7** | `user-context7` | **Yes — library docs** | Next.js, Convex API patterns, Web3Auth, MetaMask Kit, Stagehand, x402, Venice |
-| **Vercel** | `plugin-vercel-vercel` | **Yes — deploy & platform** | Deploy, env vars, build logs, `search_vercel_documentation` |
-| **Cursor IDE Browser** | `cursor-ide-browser` | Demo / E2E verification | Manual UI testing, demo rehearsal — **not** production apply (use Browserbase) |
+| **Context7** | `user-context7` | **Yes — library docs** | **Neo4j driver**, Next.js, Web3Auth, MetaMask Kit, Stagehand, x402, Venice |
+| **Vercel** | `plugin-vercel-vercel` | **Yes — deploy & platform** | Deploy, env vars, build logs, Vercel Blob |
+| **Cursor IDE Browser** | `cursor-ide-browser` | Demo / E2E verification | Manual UI testing — **not** production apply (use Browserbase) |
 | **Playwright** | `user-playwright` | Optional — automated E2E | Login flow, dashboard smoke tests |
-| **Chrome DevTools** | `user-chrome-devtools` | Optional — debug | Network/console inspection during auth/x402 debug |
+| **Chrome DevTools** | `user-chrome-devtools` | Optional — debug | Network/console during auth/x402 debug |
 | **Filesystem** | `user-filesystem` | Optional | Bulk file reads when exploring |
 
-**Convex MCP workflow** (mandatory for schema, functions, and debugging):
+**Neo4j workflow** (mandatory for database work):
 
-The **Convex MCP server is installed locally** — use it to understand and verify the live deployment before and after editing Convex code. Read tool schemas in `mcps/user-convex/tools/` before calling.
-
-1. **`status`** — get deployment selector for this project (`projectDir`: workspace root). Default to **dev** deployment unless debugging production.
-2. **`tables`** — list tables + declared/inferred schema. Use when writing or validating `convex/schema.ts`.
-3. **`functionSpec`** — list all queries, mutations, actions with arg validators and visibility. Use before calling functions from the app or writing new exports.
-4. **`run`** — execute a query/mutation/action on the deployment (JSON-encoded args). Use to verify handlers work after changes.
-5. **`data`** — read paginated rows from a table. Use to inspect `applications`, `agentRuns`, `onchainLogs` during debug/demo prep.
-6. **`logs`** — fetch UDF execution logs; set `status: "failure"` when debugging action errors.
-7. **`envList` / `envGet` / `envSet`** — inspect or set Convex deployment env vars (server-side secrets for actions).
-8. **`runOneoffQuery`** — ad-hoc read queries when exploring data shape.
-9. **`insights`** — deployment health / usage signals when troubleshooting.
-
-**When to prefer Convex MCP vs Context7:**
-
-| Need | Use |
-|------|-----|
-| Live schema, table names, indexes | **Convex MCP** `tables` |
-| What functions exist and their args | **Convex MCP** `functionSpec` |
-| Test a mutation/action after edit | **Convex MCP** `run` |
-| Why an action failed | **Convex MCP** `logs` (status: failure) |
-| Convex API syntax, patterns, migrations | **Context7** `/get-convex/convex` or convex.dev docs |
-| General library docs (non-deployment) | **Context7** |
+1. Read **Graph Model** section below before writing Cypher.
+2. Use **Context7** — `resolve-library-id` for `neo4j-javascript-driver`, then `query-docs`.
+3. All access through `lib/neo4j/client.ts` + `lib/neo4j/repositories/*` — never scatter driver calls.
+4. Run constraints via `scripts/neo4j-init.cypher` on fresh Aura instance.
+5. Verify with Neo4j Browser or `cypher-shell` after schema changes.
 
 **Context7 workflow** (mandatory for third-party library API docs):
 
-1. `resolve-library-id` with library name + question
+1. `resolve-library-id` with library name + question (e.g. `neo4j javascript driver`)
 2. Pick best match (`/org/project`, High reputation preferred)
 3. `query-docs` with full question — not single keywords
 4. Implement using fetched docs
@@ -262,7 +254,7 @@ The **Convex MCP server is installed locally** — use it to understand and veri
 2. `deploy_to_vercel` / `get_deployment_build_logs` when deploying
 3. `get_runtime_logs` when debugging production/preview
 
-**Do not use MCP browser tools for autonomous job apply** — production automation runs on Browserbase + Stagehand in Convex actions only.
+**Do not use MCP browser tools for autonomous job apply** — production automation runs on Browserbase + Stagehand in `lib/jobs/` only.
 
 ---
 
@@ -301,42 +293,53 @@ The **Convex MCP server is installed locally** — use it to understand and veri
 │       │   ├── web3auth/route.ts       → idToken verify, session cookie
 │       │   └── verify/route.ts         → SIWE verify, link wallet
 │       ├── jobs/
-│       │   ├── hunt/route.ts           → x402-gated hunt
+│       │   ├── hunt/route.ts           → x402-gated hunt → lib/jobs/jobHunt
 │       │   ├── analyze-url/route.ts    → x402-gated URL analyze + apply
 │       │   └── apply/[listingId]/route.ts
-│       └── webhooks/1shot/route.ts     → Relayer tx status (prefer over polling)
-├── convex/
-│   ├── schema.ts
-│   ├── users.ts, jobProfiles.ts, resumes.ts, delegations.ts
-│   ├── jobListings.ts, applications.ts, agentRuns.ts
-│   ├── onchainLogs.ts, browserSessions.ts, x402Payments.ts
-│   ├── actions/
-│   │   ├── jobHunt.ts                  → Exa + LinkedIn + rank + apply loop
-│   │   ├── analyzeAndApply.ts          → Brave + Browserbase + personalize + apply
-│   │   └── personalizeDocuments.ts     → Venice resume + cover letter generation
-│   └── crons.ts                        → Daily status checks (prefer over Vercel cron)
-├── components/
-│   ├── retroui/                        → 38 RetroUI components (primary UI kit)
-│   ├── layout/                         → Navbar, Footer
-│   ├── auth/                           → LoginButtons, WalletUpgradeBanner
-│   ├── dashboard/                      → StatsBar, LiveLogDrawer, ApplicationTable, OnchainPanel
-│   └── onboarding/                     → ResumeUpload, JobPreferencesForm, PermissionStepper
+│       ├── agent-runs/
+│       │   ├── route.ts                → List active runs (Neo4j)
+│       │   └── [id]/route.ts           → Poll run + logs (SWR target)
+│       ├── rag/                        → Agentic RAG API for OpenClaw
+│       │   ├── profile/route.ts
+│       │   ├── resume/route.ts
+│       │   ├── job/[listingId]/route.ts
+│       │   ├── match/route.ts
+│       │   └── applications/route.ts
+│       ├── uploads/resume/route.ts     → Vercel Blob upload
+│       └── webhooks/1shot/route.ts     → Relayer tx status
 ├── lib/
+│   ├── neo4j/
+│   │   ├── client.ts                   → Driver singleton (server-only)
+│   │   ├── repositories/               → Cypher per domain
+│   │   │   ├── users.ts, applications.ts, agentRuns.ts
+│   │   │   ├── jobListings.ts, onchainLogs.ts, delegations.ts
+│   │   │   └── ...
+│   │   └── types.ts                    → Node/relationship TypeScript types
+│   ├── rag/
+│   │   ├── queries.ts                  → Cypher for each RAG tool
+│   │   ├── formatters.ts               → JSON context for Venice prompts
+│   │   └── types.ts
+│   ├── jobs/
+│   │   ├── jobHunt.ts                  → Exa + LinkedIn + rank + apply loop
+│   │   ├── analyzeAndApply.ts          → Brave + Browserbase + personalize
+│   │   └── personalizeDocuments.ts
+│   ├── storage/blob.ts                 → Vercel Blob helpers
 │   ├── metamask/                       → siwe.ts, smartAccount.ts, permissions.ts
 │   ├── web3auth/                       → provider.tsx, config.ts, verifyIdToken.ts
 │   ├── openclaw/client.ts              → ensureRunning(), rankJobs(), personalize()
 │   ├── x402/middleware.ts, facilitator.ts
 │   ├── onchain/relayer.ts              → 1Shot client
 │   ├── automation/
-│   │   ├── exa-search.ts
-│   │   ├── brave-search.ts
-│   │   ├── linkedin-search.ts
-│   │   ├── job-url-analyze.ts
-│   │   ├── stagehand-apply.ts
-│   │   ├── apply-pipeline.ts           → Orchestrates full apply flow
+│   │   ├── exa-search.ts, brave-search.ts, linkedin-search.ts
+│   │   ├── job-url-analyze.ts, stagehand-apply.ts, apply-pipeline.ts
 │   │   └── session-manager.ts
 │   └── utils.ts                        → MATCH_THRESHOLD = 70
-├── providers/Web3Provider.tsx          → Web3Auth + wagmi + Convex
+├── scripts/
+│   └── neo4j-init.cypher               → Constraints, indexes, seed (dev)
+├── components/
+│   ├── retroui/                        → 38 RetroUI components
+│   ├── layout/, auth/, dashboard/, onboarding/
+├── providers/Web3Provider.tsx          → Web3Auth + wagmi (no Neo4j on client)
 └── middleware.ts                       → Session protection
 ```
 
@@ -347,20 +350,23 @@ The **Convex MCP server is installed locally** — use it to understand and veri
 | Layer | Owns | Forbidden |
 |-------|------|-----------|
 | `app/` | Pages, layouts, thin route handlers | Business logic, DB calls, Browserbase |
-| `convex/` | All state, actions, crons, file storage | Direct React imports |
-| `lib/automation/` | Exa, Brave, LinkedIn, Stagehand, Browserbase | UI components, Convex schema |
+| `lib/neo4j/` | All Cypher, graph writes/reads | Client components, browser |
+| `lib/jobs/` | Long-running hunt/apply orchestration | UI components |
+| `lib/rag/` | Agentic RAG Cypher + formatters for OpenClaw | Client exposure |
+| `lib/jobs/` | Long-running hunt/apply orchestration | UI components |
+| `lib/automation/` | Exa, Brave, LinkedIn, Stagehand, Browserbase | UI, Neo4j schema |
 | `lib/openclaw/` | HTTP client to OpenClaw sandbox | Browser automation |
 | `lib/metamask/` | SIWE, Smart Accounts Kit, ERC-7715 | Web3Auth token logic |
 | `lib/x402/` | 402 responses, payment verification | Hunt ranking logic |
-| `components/` | Presentation only | Direct external API calls |
-| `jobclaw-openclaw` | Venice reasoning, model routing | Browserbase, Convex, x402 |
+| `components/` | Presentation only | Direct Neo4j or external API calls |
+| `jobclaw-openclaw` | Venice reasoning, **agentic RAG tool calls** | Browserbase, direct Neo4j writes, x402 |
 
 **Call direction rules:**
 
-- `app/api/*` → verify auth/x402 → schedule Convex action → return `{ runId }`
-- Convex actions → call `lib/*` helpers → append `agentRuns.logs` via mutation
+- `app/api/*` → verify auth/x402 → create `AgentRun` in Neo4j → kick `lib/jobs/*` (async) → return `{ runId }`
+- `lib/jobs/*` → call `lib/automation/*`, `lib/openclaw/*` → write nodes/relationships via `lib/neo4j/repositories/*`
+- Client polls `GET /api/agent-runs/[id]` during active hunts (SWR ~2s)
 - OpenClaw client → POST to external sandbox only — never Stagehand
-- Never import `agent/` logic into `components/` (no legacy agent folder — use `lib/automation/`)
 
 ---
 
@@ -371,26 +377,27 @@ The **Convex MCP server is installed locally** — use it to understand and veri
 | Runtime | Workload | Max duration | Examples |
 |---------|----------|--------------|----------|
 | Next.js Server Component | SSR, static data | Request-bound | Landing, dashboard shell |
-| Next.js Route Handler | Auth verify, x402 gate | ≤ 5 min (Hobby) | `/api/jobs/hunt` |
-| Convex Query | Realtime reads | Fast | `useQuery(api.applications.list)` |
-| Convex Mutation | User writes | Fast | Resume upload metadata |
-| Convex Action | External I/O | Long | jobHunt, analyzeAndApply |
-| Convex Cron | Scheduled | Periodic | Application status poll |
+| Next.js Route Handler | Auth, x402, kick jobs | ≤ 5 min (Hobby) | `/api/jobs/hunt` |
+| Neo4j read (repository) | Graph queries | Fast | `applications.listByUser` |
+| Neo4j write (repository) | Create/update nodes | Fast | User upsert, append LogEntry |
+| `lib/jobs/*` | External I/O pipelines | Long (async) | jobHunt, analyzeAndApply |
+| Vercel Cron | Scheduled | Periodic | `/api/cron/status-check` |
+| SWR client poll | Live logs during hunt | ~2s interval | `/api/agent-runs/[id]` |
 | Browserbase Session | Browser automation | 2–5 min | LinkedIn search, form fill |
 | OpenClaw Sandbox | LLM reasoning | Cold ~60s, warm ~10s | Job ranking, personalization |
 
 ### State ownership
 
-| State | Source of truth | Realtime? |
-|-------|-----------------|-----------|
-| User session | httpOnly cookie + Convex `users` | No |
-| Resume PDF | Convex file storage | No |
-| Job listings | Convex `jobListings` | Via query refresh |
-| Applications | Convex `applications` | Yes (`useQuery`) |
-| Agent logs | Convex `agentRuns.logs` | Yes |
-| Onchain events | Convex `onchainLogs` | Yes |
-| x402 payments | Convex `x402Payments` | Yes |
-| Venice reasoning output | Stored on `applications` — not re-fetched from OpenClaw | No |
+| State | Source of truth | Live updates |
+|-------|-----------------|--------------|
+| User session | httpOnly cookie + Neo4j `User` node | No |
+| Resume PDF | Vercel Blob (`blobUrl` on `Resume` node) | No |
+| Job listings | Neo4j `JobListing` nodes | SWR refetch |
+| Applications | Neo4j `Application` nodes + relationships | SWR poll during hunt |
+| Agent logs | Neo4j `LogEntry` nodes linked to `AgentRun` | SWR poll ~2s |
+| Onchain events | Neo4j `OnchainLog` nodes | SWR refetch |
+| x402 payments | Neo4j `X402Payment` nodes | SWR refetch |
+| Venice output | Properties on `Application` node | No |
 
 ---
 
@@ -403,8 +410,8 @@ The **Convex MCP server is installed locally** — use it to understand and veri
   → Web3Auth modal (Google / GitHub / email)
   → POST /api/auth/web3auth (verify idToken via jose + JWKS)
   → httpOnly session cookie
-  → Convex users.upsertFromWeb3Auth
-  → /onboarding (resume PDF → Convex storage, job preferences, consent)
+  → Neo4j MERGE User + SET properties (usersRepository.upsertFromWeb3Auth)
+  → /onboarding (resume PDF → Vercel Blob, job preferences, consent)
   → Dashboard (limited) + WalletUpgradeBanner
 ```
 
@@ -419,7 +426,7 @@ The **Convex MCP server is installed locally** — use it to understand and veri
       → toMetaMaskSmartAccount()
       → ERC-7715 Advanced Permissions prompt
       → EIP-7702 upgrade via 1Shot relayer
-      → Convex delegations + onchainLogs
+      → Neo4j Delegation + OnchainLog nodes
   → Full dashboard unlocked (hunt, apply, onchain)
 ```
 
@@ -431,17 +438,17 @@ The **Convex MCP server is installed locally** — use it to understand and veri
 /dashboard/hunt → POST /api/jobs/hunt
   → x402 middleware: 402 + Payment-Required
   → Client/delegated wallet signs → retry with X-PAYMENT
-  → 1Shot facilitator settles USDC → onchainLogs + x402Payments
-  → Convex action jobHunt:
+  → 1Shot facilitator settles USDC → Neo4j OnchainLog + X402Payment nodes
+  → lib/jobs/jobHunt (async):
       1. openclaw.ensureRunning()
       2. parallel: exa.searchJobs() + linkedin.searchJobs() [Browserbase]
-      3. openclaw.rankJobs(resume, listings) → filter matchScore >= 70
-      4. for each match (max 3):
-           a. braveSearch.enrich(company, role) [optional]
-           b. openclaw.personalize(resume, job) → cover letter + resume variant
-           c. stagehand.apply(personalizedContent)
-           d. store artifacts + append agentRuns.logs
-  → UI updates via useQuery (realtime)
+      3. openclaw.rankJobs() → MERGE JobListing nodes + MATCH relationships
+      4. for each match (max 3, score >= 70):
+           a. braveSearch.enrich()
+           b. openclaw.personalize() → Vercel Blob (cover letter + resume)
+           c. stagehand.apply()
+           d. CREATE Application, LogEntry nodes
+  → UI polls GET /api/agent-runs/[id] (SWR ~2s)
 ```
 
 ### Flow D — User-pasted job URL (Brave + Browserbase + Venice)
@@ -449,138 +456,228 @@ The **Convex MCP server is installed locally** — use it to understand and veri
 ```
 User pastes official URL on /dashboard/hunt
   → POST /api/jobs/analyze-url (x402-gated)
-  → Convex action analyzeAndApply:
-      1. braveSearch.query(parsed company + title from URL)
+  → lib/jobs/analyzeAndApply (async):
+      1. braveSearch.query(company + title from URL)
       2. Browserbase → Stagehand extract(requirements, form schema)
       3. OpenClaw/Venice → matchScore, matchReason, cover letter, resume variant
-      4. Convex storage: coverLetterStorageId, personalizedResumeStorageId
-      5. Stagehand act(fill fields, upload resume, submit)
-      6. screenshot → applications + agentRuns.logs
+      4. Vercel Blob: coverLetterUrl, personalizedResumeUrl
+      5. Stagehand fill + submit
+      6. CREATE Application + LogEntry nodes in Neo4j
 ```
 
-### Flow E — OpenClaw reasoning (external repo only)
+### Flow E — OpenClaw + Agentic RAG (external repo)
 
 ```
 lib/openclaw/client.ts
   → POST {OPENCLAW_BASE_URL}/api/status (wake sandbox)
-  → GET  {OPENCLAW_BASE_URL}/api/status?health=1
-  → Gateway chat completions (Venice venice/kimi-k2-5)
-  → Returns JSON: ranked jobs | personalized text
-  → NEVER calls Browserbase
+  → Gateway chat with Venice (venice/kimi-k2-5)
+  → Venice agent uses RAG tools (agentic loop):
+      1. query_user_profile(userId)     → GET jobclaw /api/rag/profile
+      2. query_resume_skills(userId)    → GET jobclaw /api/rag/skills
+      3. query_job_context(listingId)   → GET jobclaw /api/rag/job/{id}
+      4. query_skill_match(userId, id)  → GET jobclaw /api/rag/match
+      5. query_apply_history(userId)    → GET jobclaw /api/rag/applications
+  → Each RAG endpoint runs Cypher on Neo4j → returns JSON context
+  → Venice synthesizes: matchScore, matchReason, coverLetter, resumeVariant
+  → jobclaw stores results on Application node in Neo4j
+  → NEVER calls Browserbase from OpenClaw
+```
+
+**Agentic** = Venice **decides which** RAG tools to call and in what order — not a fixed retrieve-then-prompt pipeline.
+
+---
+
+## Neo4j for the Website
+
+**Neo4j is the single backend for the entire JobClaw website.** Every page reads from the graph via server-side repositories or API routes — never mock data, never Convex, never client-side DB driver.
+
+### Page → Neo4j mapping
+
+| Page | Neo4j data loaded |
+|------|-------------------|
+| `/dashboard` | `Application` count, recent `AgentRun`, `OnchainLog` summary |
+| `/dashboard/hunt` | `JobProfile`, active `AgentRun`, past hunts |
+| `/dashboard/onchain` | `OnchainLog`, `X402Payment` nodes |
+| `/dashboard/applications/[id]` | `Application` → `FOR_JOB` → `JobListing`, skill match subgraph |
+| `/onboarding` | `JobProfile`, `Resume` nodes |
+| `/profile` | `User`, `JobProfile`, `Resume`, `Delegation` |
+
+### Website data access rules
+
+1. **Server Components** — call `lib/neo4j/repositories/*` directly (with session `userId`).
+2. **Client Components** — fetch `/api/*` routes that query Neo4j server-side.
+3. **Never** expose `NEO4J_URI` or driver to the browser.
+4. **SWR polling** — only for live `AgentRun` + `LogEntry` during hunts.
+5. All writes (upload resume, start hunt, apply) → API route → Neo4j repository.
+
+```typescript
+// app/dashboard/page.tsx (Server Component example)
+import { applicationsRepository } from "@/lib/neo4j/repositories/applications";
+import { getSessionUserId } from "@/lib/auth/session";
+
+export default async function DashboardPage() {
+  const userId = await getSessionUserId();
+  const stats = await applicationsRepository.getStats(userId);
+  return <DashboardStats stats={stats} />;
+}
 ```
 
 ---
 
-## Convex Schema
+## Agentic RAG — OpenClaw + Neo4j
 
-### `users`
+OpenClaw's Venice agent uses **agentic RAG**: the LLM autonomously chooses which graph queries to run against Neo4j (via jobclaw's RAG API) before ranking jobs, personalizing resumes, or writing cover letters.
 
-| Field | Type | Notes |
-|-------|------|-------|
-| walletAddress | string? | MetaMask EOA (after upgrade) |
-| smartAccountAddress | string? | After EIP-7702 upgrade |
-| web3authSub | string? | Web3Auth user id |
-| email | string? | From Web3Auth |
-| authMethod | string | `web3auth` \| `metamask` \| `hybrid` |
-| onboardingStep | string? | `resume` \| `wallet` \| `permissions` \| `complete` |
-| createdAt | number | |
+### Why graph RAG (not vector-only)
 
-### `jobProfiles`
+| Approach | JobClaw use |
+|----------|-------------|
+| **Graph traversal** | Skill overlap, apply history, user ↔ job relationships — **primary** |
+| Vector embeddings | Optional future — `DocumentChunk` nodes on `Resume.parsedText` / `JobListing.description` |
 
-| Field | Type | Notes |
-|-------|------|-------|
-| userId | id | |
-| titles | string[] | Roles seeking |
-| locations | string[] | |
-| salaryMin, salaryMax | number? | |
-| remotePreference | string | remote / hybrid / onsite / any |
-| consentGranted | boolean | Required for auto-apply |
+Judges see: "Venice retrieved your React skills from the graph and matched them to this job's requirements."
 
-### `resumes`
+### RAG API (`jobclaw` repo)
 
-| Field | Type | Notes |
-|-------|------|-------|
-| userId | id | |
-| storageId | id | Convex file storage (base resume PDF) |
-| parsedText | string? | Extracted text for Venice matching |
+All endpoints: `Authorization: Bearer ${RAG_API_SECRET}` (shared with OpenClaw sandbox).
 
-### `delegations`
+| Endpoint | Returns | Cypher purpose |
+|----------|---------|----------------|
+| `GET /api/rag/profile?userId=` | titles, locations, remote, consent | `User` → `HAS_PROFILE` → `JobProfile` |
+| `GET /api/rag/resume?userId=` | parsedText, skills[] | `User` → `HAS_RESUME` → `HAS_SKILL` → `Skill` |
+| `GET /api/rag/job/[listingId]` | title, company, description, requirements | `JobListing` → `REQUIRES` → `Skill` |
+| `GET /api/rag/match?userId=&listingId=` | matchedSkills[], missingSkills[], score hint | skill overlap subgraph |
+| `GET /api/rag/applications?userId=` | recent applies, statuses | `APPLIED_TO` history |
+| `POST /api/rag/context` | custom bundle for agent | body: `{ userId, listingId, tools: [...] }` |
 
-| Field | Type | Notes |
-|-------|------|-------|
-| userId | id | |
-| erc7715Permission | any | Advanced Permissions payload |
-| erc7710DelegationCaveats | any | Spend cap, expiry, allowed targets |
-| expiresAt | number | |
-| status | string | `active` \| `revoked` |
+### OpenClaw tool definitions (`jobclaw-openclaw` repo)
 
-### `jobListings`
+Register as OpenClaw tools pointing at jobclaw RAG API:
 
-| Field | Type | Notes |
-|-------|------|-------|
-| userId | id | Scoped to user |
-| title, company, url, description | string | |
-| source | string | `exa` \| `linkedin` \| `url` |
-| matchScore | number? | 0–100 after Venice rank |
-| braveContext | string? | Brave Search enrichment summary |
+```json
+{
+  "name": "query_skill_match",
+  "description": "Get skill overlap between user resume and a job listing from Neo4j graph",
+  "parameters": { "userId": "string", "listingId": "string" }
+}
+```
 
-### `applications`
+Venice agent loop:
+1. Receive task (rank jobs / personalize application)
+2. **Decide** which RAG tools to invoke
+3. Call jobclaw `/api/rag/*` → receive graph context
+4. Reason with Venice → output structured JSON
+5. jobclaw persists output to Neo4j `Application` node
 
-| Field | Type | Notes |
-|-------|------|-------|
-| userId, listingId | id | |
-| status | string | `discovered` → `matched` → `personalizing` → `applying` → `submitted` \| `failed` |
-| matchScore, matchReason | number, string | Venice output |
-| veniceModel | string | e.g. `venice/kimi-k2-5` |
-| coverLetterStorageId | id? | Per-job cover letter |
-| personalizedResumeStorageId | id? | Tailored resume PDF |
-| screenshotStorageId | id? | Apply proof |
-| browserbaseSessionId | string? | |
-| errorMessage | string? | On failure |
+### Implementation files
 
-### `agentRuns`
+```
+jobclaw/
+├── lib/rag/
+│   ├── queries.ts          → Cypher for each RAG tool
+│   ├── formatters.ts       → JSON context for Venice prompts
+│   └── types.ts
+├── app/api/rag/
+│   ├── profile/route.ts
+│   ├── resume/route.ts
+│   ├── job/[listingId]/route.ts
+│   ├── match/route.ts
+│   └── applications/route.ts
 
-| Field | Type | Notes |
-|-------|------|-------|
-| userId | id | |
-| runType | string | `hunt` \| `analyze_url` \| `apply_single` |
-| phase | string | Current step name |
-| logs | array | `{ timestamp, phase, message, level?, txHash?, veniceModel? }` |
-| openclawLatencyMs | number? | |
-| startedAt, completedAt | number? | |
+jobclaw-openclaw/
+├── tools/rag-tools.json    → OpenClaw tool manifest → jobclaw URLs
+└── openclaw.config.*       → Venice + tool calling enabled
+```
 
-### `onchainLogs`
+### RAG security
 
-| Field | Type | Notes |
-|-------|------|-------|
-| userId | id | |
-| type | string | `permission_grant` \| `x402_payment` \| `relayer_exec` |
-| txHash | string | |
-| chainId | number | 84532 dev / 8453 mainnet demo |
-| amountUsdc | number? | |
-| explorerUrl | string | BaseScan link |
+- `RAG_API_SECRET` — only OpenClaw sandbox + jobclaw server know it
+- Every RAG query scoped to `userId` — OpenClaw passes `userId` from hunt session
+- Never return cross-user graph data
+- Log RAG tool calls as `LogEntry` with `phase: "rag_retrieve"` for demo visibility
 
-### `browserSessions`
+---
 
-| Field | Type | Notes |
-|-------|------|-------|
-| userId | id | |
-| browserbaseSessionId | string | |
-| board | string | `linkedin` \| `greenhouse` \| `lever` \| `direct_url` |
-| status | string | `running` \| `completed` \| `failed` |
-| replayUrl | string? | Browserbase replay for demo |
-| lastSyncedAt | number | |
+## Neo4j Graph Model
 
-### `x402Payments`
+**Required.** All app state is nodes + relationships. Files (PDF, screenshots) are **Vercel Blob URLs** on nodes — never store binaries in Neo4j.
 
-| Field | Type | Notes |
-|-------|------|-------|
-| userId | id | |
-| resourcePath | string | `/api/jobs/hunt` etc. |
-| amount | number | USDC |
-| paymentHeader | string? | Redacted in logs |
-| txHash | string? | |
-| settledAt | number? | |
+### Node labels and properties
+
+| Label | Key properties | Notes |
+|-------|----------------|-------|
+| `User` | `id`, `walletAddress?`, `smartAccountAddress?`, `web3authSub?`, `email?`, `authMethod`, `onboardingStep`, `createdAt` | Root entity per person |
+| `JobProfile` | `id`, `titles[]`, `locations[]`, `salaryMin?`, `salaryMax?`, `remotePreference`, `consentGranted` | Job search preferences |
+| `Resume` | `id`, `blobUrl`, `parsedText?`, `uploadedAt` | Base resume PDF in Vercel Blob |
+| `Skill` | `name` | Normalized skill tag for graph matching |
+| `Delegation` | `id`, `erc7715Permission` (JSON string), `erc7710Caveats` (JSON), `expiresAt`, `status` | ERC-7715 grant |
+| `JobListing` | `id`, `title`, `company`, `url`, `description`, `source`, `matchScore?`, `braveContext?`, `discoveredAt` | `source`: `exa` \| `linkedin` \| `url` |
+| `Application` | `id`, `status`, `matchScore`, `matchReason`, `veniceModel`, `coverLetterUrl?`, `personalizedResumeUrl?`, `screenshotUrl?`, `browserbaseSessionId?`, `errorMessage?` | Status flow: discovered → matched → personalizing → applying → submitted \| failed |
+| `AgentRun` | `id`, `runType`, `phase`, `openclawLatencyMs?`, `startedAt`, `completedAt?` | `runType`: hunt \| analyze_url \| apply_single |
+| `LogEntry` | `id`, `timestamp`, `phase`, `message`, `level?`, `txHash?`, `veniceModel?` | Append-only — one node per log line |
+| `OnchainLog` | `id`, `type`, `txHash`, `chainId`, `amountUsdc?`, `explorerUrl`, `createdAt` | type: permission_grant \| x402_payment \| relayer_exec |
+| `BrowserSession` | `id`, `browserbaseSessionId`, `board`, `status`, `replayUrl?`, `lastSyncedAt` | |
+| `X402Payment` | `id`, `resourcePath`, `amount`, `txHash?`, `settledAt?` | Audit trail |
+
+### Relationships
+
+```cypher
+(User)-[:HAS_PROFILE]->(JobProfile)
+(User)-[:HAS_RESUME]->(Resume)
+(Resume)-[:HAS_SKILL]->(Skill)
+(JobListing)-[:REQUIRES]->(Skill)
+(User)-[:HAS_DELEGATION]->(Delegation)
+(User)-[:DISCOVERED]->(JobListing)
+(User)-[:APPLIED_TO]->(Application)-[:FOR_JOB]->(JobListing)
+(User)-[:RAN]->(AgentRun)-[:HAS_LOG]->(LogEntry)
+(User)-[:HAS_ONCHAIN]->(OnchainLog)
+(User)-[:HAS_PAYMENT]->(X402Payment)
+(Application)-[:USED_SESSION]->(BrowserSession)
+```
+
+### Graph matching (demo narrative)
+
+Venice ranks jobs; graph **confirms** skill overlap for judges:
+
+```cypher
+MATCH (u:User {id: $userId})-[:HAS_RESUME]->(r:Resume)-[:HAS_SKILL]->(s:Skill)
+      <-[:REQUIRES]-(j:JobListing)<-[:FOR_JOB]-(a:Application)
+WHERE a.status = 'submitted'
+RETURN j.title, collect(s.name) AS matchedSkills
+```
+
+### Constraints (`scripts/neo4j-init.cypher`)
+
+```cypher
+CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE;
+CREATE CONSTRAINT job_listing_id IF NOT EXISTS FOR (j:JobListing) REQUIRE j.id IS UNIQUE;
+CREATE CONSTRAINT application_id IF NOT EXISTS FOR (a:Application) REQUIRE a.id IS UNIQUE;
+CREATE CONSTRAINT agent_run_id IF NOT EXISTS FOR (r:AgentRun) REQUIRE r.id IS UNIQUE;
+CREATE INDEX user_wallet IF NOT EXISTS FOR (u:User) ON (u.walletAddress);
+CREATE INDEX user_web3auth IF NOT EXISTS FOR (u:User) ON (u.web3authSub);
+```
+
+### Repository pattern
+
+```typescript
+// lib/neo4j/client.ts — server-only singleton
+import neo4j from "neo4j-driver";
+export function getDriver() {
+  return neo4j.driver(
+    process.env.NEO4J_URI!,
+    neo4j.auth.basic(process.env.NEO4J_USERNAME!, process.env.NEO4J_PASSWORD!)
+  );
+}
+
+// lib/neo4j/repositories/agentRuns.ts
+export async function appendLog(runId: string, entry: LogEntryInput) {
+  await session.run(`
+    MATCH (r:AgentRun {id: $runId})
+    CREATE (l:LogEntry {id: randomUUID(), ...})
+    CREATE (r)-[:HAS_LOG]->(l)
+  `, { runId, ...entry });
+}
+```
 
 ---
 
@@ -604,7 +701,7 @@ lib/openclaw/client.ts
 - **Web3Auth:** idToken verified server-side → signed httpOnly session cookie (`SESSION_SECRET`)
 - **MetaMask:** SIWE `personal_sign` → `/api/auth/verify` → same cookie format, wallet linked
 - **Middleware:** `middleware.ts` checks session on `/dashboard/*`, `/onboarding/*`
-- **Convex auth:** Pass user id from session into queries/mutations — always filter by `userId`
+- **Neo4j auth:** Pass `userId` from session into every repository call — filter `MATCH (u:User {id: $userId})`
 
 ### Prize-critical onchain (MetaMask path only)
 
@@ -634,8 +731,8 @@ Client POST (no payment)
   → Delegated smart account signs EIP-3009 authorization
   → Client retries with X-PAYMENT header
   → lib/x402/facilitator.ts → 1Shot verify + settle
-  → Write x402Payments + onchainLogs
-  → Route handler schedules Convex action
+  → Write X402Payment + OnchainLog nodes in Neo4j
+  → Route kicks lib/jobs/* (async)
 ```
 
 ---
@@ -649,7 +746,7 @@ Before every apply:
 1. Input: base resume text + job description + braveContext
 2. Output: `matchScore`, `matchReason`, `coverLetter`, `resumeVariant` (markdown or structured)
 3. Store model id: `venice/kimi-k2-5`
-4. Render resume variant to PDF if needed → Convex storage
+4. Render resume variant to PDF if needed → Vercel Blob
 
 ### Browserbase + Stagehand
 
@@ -696,8 +793,10 @@ Only auto-apply when Venice `matchScore >= MATCH_THRESHOLD`.
 
 | Variable | Scope | Purpose |
 |----------|-------|---------|
-| `NEXT_PUBLIC_CONVEX_URL` | Public | Convex deployment URL |
-| `CONVEX_DEPLOY_KEY` | Server | CI / deploy |
+| `NEO4J_URI` | Server | `neo4j+s://xxx.databases.neo4j.io` (Aura) |
+| `NEO4J_USERNAME` | Server | `neo4j` |
+| `NEO4J_PASSWORD` | Server | Aura password |
+| `BLOB_READ_WRITE_TOKEN` | Server | Vercel Blob for PDFs/screenshots |
 | `NEXT_PUBLIC_WEB3AUTH_CLIENT_ID` | Public | Web3Auth dashboard |
 | `SESSION_SECRET` | Server | Cookie signing |
 | `NEXT_PUBLIC_CHAIN_ID` | Public | `84532` dev / `8453` mainnet demo |
@@ -706,7 +805,9 @@ Only auto-apply when Venice `matchScore >= MATCH_THRESHOLD`.
 | `BROWSERBASE_PROJECT_ID` | Server | Browserbase project |
 | `EXA_API_KEY` | Server | Job discovery |
 | `BRAVE_SEARCH_API_KEY` | Server | URL enrichment |
-| `OPENCLAW_BASE_URL` | Server | OpenClaw sandbox URL |
+| `RAG_API_SECRET` | Server | Auth between OpenClaw sandbox and `/api/rag/*` |
+| `JOBCLAW_BASE_URL` | Server (openclaw repo) | OpenClaw calls this for RAG (e.g. `https://jobclaw.vercel.app`) |
+| `OPENCLAW_BASE_URL` | Server (jobclaw repo) | jobclaw wakes OpenClaw sandbox |
 | `OPENCLAW_ADMIN_SECRET` | Server | Wake / admin auth |
 | `OPENCLAW_BYPASS_SECRET` | Server | Vercel deployment protection bypass |
 | `ONESHOT_API_KEY` | Server | 1Shot relayer |
@@ -724,14 +825,15 @@ Never commit secrets. `NEXT_PUBLIC_*` only for browser-safe values.
 |---------|---------------|-------|
 | `jobclaw` | Vercel Hobby | Main app — use `deploy-to-vercel` skill |
 | `jobclaw-openclaw` | Vercel via `vclaw create` | Separate project |
-| Convex | `npx convex deploy` | Dev + prod deployments |
+| Neo4j Aura | neo4j.com/cloud | Free tier for hackathon — run `scripts/neo4j-init.cypher` |
+| Vercel Blob | Vercel dashboard | Resume, cover letter, screenshot storage |
 | Browserbase | Cloud API | Sessions created per action |
 | 1Shot | API | Mainnet for final demo video |
 
 ### Pre-demo checklist
 
 - [ ] OpenClaw sandbox pre-warmed (`POST /api/status`)
-- [ ] 2 applications pre-seeded in Convex
+- [ ] 2 applications pre-seeded in Neo4j
 - [ ] Mainnet delegation + x402 tested for 1Shot prize
 - [ ] Venice model id visible in UI
 - [ ] Browserbase replay URL ready as backup proof
@@ -742,8 +844,8 @@ Never commit secrets. `NEXT_PUBLIC_*` only for browser-safe values.
 
 | Prize track | Architectural proof | UI surface |
 |-------------|----------------------|------------|
-| **Best Agent** | Convex `agentRuns` + `applications` full pipeline | Live log drawer, application timeline |
-| **Best Venice AI** | OpenClaw + `venice/kimi-k2-5` in rank + personalize | Match reason, model id badge |
+| **Best Agent** | Neo4j `AgentRun` + `Application` graph pipeline | Live log drawer, application timeline |
+| **Best Venice AI** | OpenClaw agentic RAG + `venice/kimi-k2-5` retrieving from Neo4j | Match reason cites graph skills, model id badge |
 | **Best x402 + ERC-7710** | x402 middleware + delegated smart account | Hunt button → 402 → payment → run |
 | **Best 1Shot Relayer** | 7702 upgrade + 7710 exec + webhook | Onchain panel, BaseScan links |
 
@@ -753,15 +855,18 @@ Never commit secrets. `NEXT_PUBLIC_*` only for browser-safe values.
 
 1. Read **`AGENTS.md`** and **`context/README.md`** before every implementation session.
 2. Load the relevant **skill** (repo `.agents/skills/` or global `~/.agents/skills/`) before third-party code.
-3. Use **Convex MCP** for live schema/functions/logs; **Context7 MCP** for Convex API docs; **Vercel MCP** for deploy/platform.
-4. API routes are thin — long work in **Convex actions**.
+3. Use **Context7 MCP** for Neo4j driver + library docs; **Vercel MCP** for deploy/platform.
+4. API routes are thin — long work in **`lib/jobs/`**; all graph writes via **`lib/neo4j/repositories/`**.
 5. Browser automation **never** in OpenClaw repo.
 6. Venice model id stored on every AI output (`veniceModel` field).
-7. Every onchain action → `onchainLogs`. Every agent step → append `agentRuns.logs`.
+7. Every onchain action → `OnchainLog` node. Every agent step → append `LogEntry` node.
 8. Web3Auth onboarding OK; **demo hunt/apply/onchain requires MetaMask delegation**.
 9. Personalize resume + cover letter **before** every apply.
 10. Never use InsForge, Adzuna, PostHog, Clerk in new code.
 11. No hardcoded hex — use CSS variables from `ui-tokens.md`.
 12. RetroUI components from `components/retroui/` for all new UI.
-13. Always scope Convex queries to authenticated `userId`.
-14. Update `progress-tracker.md` and `ui-registry.md` after every feature.
+13. Always scope Neo4j queries to authenticated `userId` — never return cross-user graph data.
+14. **Never use Convex** — Neo4j is required for all website + agent data.
+15. **Agentic RAG** — OpenClaw retrieves from Neo4j via `/api/rag/*`; Venice decides which tools to call.
+16. **Website** — every page loads data from Neo4j repositories; no mock data.
+17. Update `progress-tracker.md` and `ui-registry.md` after every feature.

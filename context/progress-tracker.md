@@ -15,7 +15,7 @@ Update after every completed feature. Any agent reading this should know what is
 
 **Phase:** Phase 0 — Not started  
 **Last completed:** RetroUI theme + component library scaffold  
-**Next:** Phase 0 — Deploy jobclaw-openclaw + Convex init
+**Next:** Phase 0 — Deploy jobclaw-openclaw + Neo4j init
 
 ---
 
@@ -23,12 +23,12 @@ Update after every completed feature. Any agent reading this should know what is
 
 ### Phase 0 — OpenClaw Backend
 
-- [ ] 00 Prerequisites (Venice, 1Shot, Browserbase, Exa, Convex, Web3Auth accounts)
+- [ ] 00 Prerequisites (Venice, 1Shot, Browserbase, Exa, Neo4j, Web3Auth accounts)
 - [ ] 01 Deploy jobclaw-openclaw via vclaw + Venice config + verify
 
 ### Phase 1 — Foundation
 
-- [ ] 02 Convex schema + dashboard shell
+- [ ] 02 Neo4j schema + dashboard shell
 - [ ] 03 RetroUI landing page
 - [ ] 04 Web3Auth login + redirect to onboarding
 - [ ] 04b MetaMask connect-wallet + SIWE upgrade
@@ -40,12 +40,12 @@ Update after every completed feature. Any agent reading this should know what is
 
 ### Phase 3 — Agent Pipeline
 
-- [ ] 07 OpenClaw client + Venice rank
+- [ ] 07 OpenClaw client + Venice rank + **Agentic RAG API** (`lib/rag/`, `/api/rag/*`)
 - [ ] 08 Exa + LinkedIn job discovery
 - [ ] 08b Brave Search + analyze-url route
 - [ ] 09 x402 + 1Shot on hunt/apply/analyze routes
 - [ ] 10 Browserbase apply + Venice personalization (LinkedIn, Greenhouse, direct URLs)
-- [ ] 11 Hunt orchestration (Convex actions: jobHunt + analyzeAndApply)
+- [ ] 11 Hunt orchestration (`lib/jobs/jobHunt` + `analyzeAndApply`)
 
 ### Phase 4 — Dashboard
 
@@ -65,11 +65,12 @@ Update after every completed feature. Any agent reading this should know what is
 
 - [ ] Smart Accounts Kit visible in demo video main flow
 - [ ] ERC-7715 Advanced Permissions grant recorded
+- [ ] Venice **agentic RAG** retrieves skills from Neo4j (visible in match reason)
 - [ ] Venice model id shown in UI during rank/apply
 - [ ] x402 payment with tx hash on dashboard
 - [ ] 1Shot relayer tx (7702 + 7710) on onchain panel
 - [ ] Autonomous apply with screenshot proof
-- [ ] Live Convex agent logs during hunt
+- [ ] Live agent logs during hunt (SWR poll)
 
 ---
 
@@ -83,7 +84,8 @@ _Add decisions here as implementation progresses._
 | — | Browser automation in jobclaw, not OpenClaw | Hosted OpenClaw cannot run arbitrary skills |
 | — | Venice via OpenClaw for rank; Venice via Stagehand for form fill | Latency + prize visibility |
 | — | LinkedIn + user URL apply via Browserbase | JobPilot-style scope restored |
-| — | Brave Search + Venice personalization before apply | Tailored resume + cover letter per job |
+| — | **Neo4j** replaces Convex — powers entire website + agent graph | Required hackathon stack; all pages read from graph |
+| — | **Agentic RAG** — OpenClaw Venice calls `/api/rag/*` for Neo4j graph context | Judges see skill-based match reasoning from graph, not static prompts |
 
 ---
 

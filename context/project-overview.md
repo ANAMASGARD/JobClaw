@@ -18,8 +18,8 @@ The product pitch:
 
 | Track | What JobClaw must prove |
 |-------|-------------------------|
-| **Best Agent** | Autonomous discover → rank → apply with durable Convex logs |
-| **Best use of Venice AI** | Venice in main reasoning path via OpenClaw (`venice/kimi-k2-5`) |
+| **Best Agent** | Autonomous discover → rank → apply with durable Neo4j graph logs |
+| **Best use of Venice AI** | Venice + **agentic RAG** from Neo4j via OpenClaw (`venice/kimi-k2-5`) — match reason cites graph skills |
 | **Best x402 + ERC-7710** | HTTP 402 on hunt/apply; delegated smart account drives payment |
 | **Best 1Shot Relayer** | EIP-7702 upgrade + EIP-7710 txs via 1Shot mainnet relayer |
 | **Best Venice AI** (secondary) | Only eligible after qualifying a main track above |
@@ -38,12 +38,26 @@ Job hunting is repetitive: searching listings, reading descriptions, tailoring a
 
 | Repo | Deploy | Owns |
 |------|--------|------|
-| **`jobclaw`** (this repo) | Vercel Hobby | Next.js UI, auth, Convex, x402, Browserbase, Exa, demo |
-| **`jobclaw-openclaw`** | Separate Vercel project via `vclaw create` | OpenClaw sandbox + Venice reasoning only |
+| **`jobclaw`** (this repo) | Vercel Hobby | Next.js **website** (all pages Neo4j-backed), **Agentic RAG API**, auth, x402, Browserbase, Exa, demo |
+| **`jobclaw-openclaw`** | Separate Vercel project via `vclaw create` | OpenClaw sandbox + Venice + **agentic RAG tool orchestration** |
 
-Browser automation **never** lives in OpenClaw — hosted OpenClaw does not support arbitrary skills/MCP in sandbox.
+Browser automation **never** lives in OpenClaw — hosted OpenClaw does not support arbitrary skills/MCP in sandbox. OpenClaw **does** call jobclaw's `/api/rag/*` for Neo4j graph retrieval.
 
 ---
+
+## Neo4j Powers the Website
+
+Every page reads real data from Neo4j — no mock data, no client-side driver:
+
+| Page | Neo4j nodes loaded |
+|------|-------------------|
+| Dashboard | `Application`, `AgentRun`, `OnchainLog` stats |
+| Hunt | `JobProfile`, active `AgentRun` |
+| Applications detail | `Application` → `JobListing` + skill match subgraph |
+| Onchain | `OnchainLog`, `X402Payment` |
+| Onboarding / Profile | `User`, `JobProfile`, `Resume`, `Delegation` |
+
+Server Components call `lib/neo4j/repositories/*` directly. Client components poll `/api/*` routes.
 
 ## Pages
 
@@ -92,7 +106,7 @@ Full-width layout. No sidebar.
 5. Dashboard unlocks hunt/apply/onchain panels
 6. Hunt: Exa + LinkedIn discovery, or paste official job URL
 7. Agent: Brave Search → Browserbase analyze → Venice personalize → apply
-8. Live logs + tx hashes stream to dashboard via Convex realtime
+8. Live logs + tx hashes stream to dashboard via SWR polling (`/api/agent-runs/[id]`)
 
 ---
 
@@ -119,7 +133,7 @@ Full-width layout. No sidebar.
 
 ### Onboarding
 
-- Upload resume PDF (Convex file storage)
+- Upload resume PDF (Vercel Blob → URL on `Resume` node)
 - Job titles, locations, remote preference, salary range
 - Consent: "I authorize JobClaw to submit applications on my behalf"
 
@@ -128,19 +142,19 @@ Full-width layout. No sidebar.
 - Explain delegated scope: x402 micropayments, agent apply actions, daily spend cap
 - MetaMask Advanced Permissions (ERC-7715) prompt
 - 7702 upgrade via 1Shot
-- Save delegation + onchain log to Convex
+- Save delegation + onchain log to Neo4j
 
 ### Hunt
 
 - User clicks **Start Hunt** on `/dashboard/hunt`
 - x402: API returns 402 → wallet signs payment → retry with `X-PAYMENT`
-- Convex action: wake OpenClaw → Exa + LinkedIn search → Venice rank → personalize → Browserbase apply (max 3)
+- `lib/jobs/jobHunt`: wake OpenClaw → Exa + LinkedIn search → Venice rank → personalize → Browserbase apply (max 3)
 - Realtime logs append to `agentRuns.logs[]`
 
 ### Application detail
 
 - Match score + Venice model id + match reason
-- Application screenshot (Convex storage)
+- Application screenshot (Vercel Blob URL on `Application` node)
 - Onchain tx link if x402 payment occurred
 - Status: discovered → matched → **personalizing** → applying → submitted → failed
 
@@ -150,15 +164,16 @@ Full-width layout. No sidebar.
 
 | Data | Owner | Notes |
 |------|-------|-------|
-| User profile + resume | Convex `users`, `jobProfiles`, `resumes` | Never modified by agent without user action |
-| Job listings | Convex `jobListings` | From Exa, LinkedIn, or user-pasted URL |
-| Applications | Convex `applications` | One row per apply attempt |
-| Agent runs | Convex `agentRuns` | Append-only logs for demo |
-| Onchain events | Convex `onchainLogs` | tx hashes, permission grants, x402 settlements |
-| Browser sessions | Convex `browserSessions` | Browserbase session ids |
-| x402 payments | Convex `x402Payments` | Payment audit trail |
+| User profile + resume | Neo4j `User`, `JobProfile`, `Resume` nodes | Never modified by agent without user action |
+| Job listings | Neo4j `JobListing` nodes | From Exa, LinkedIn, or user-pasted URL |
+| Applications | Neo4j `Application` nodes + relationships | One apply attempt per job |
+| Agent runs | Neo4j `AgentRun` + `LogEntry` nodes | Append-only logs for demo |
+| Onchain events | Neo4j `OnchainLog` nodes | tx hashes, permission grants, x402 settlements |
+| Browser sessions | Neo4j `BrowserSession` nodes | Browserbase session ids |
+| x402 payments | Neo4j `X402Payment` nodes | Payment audit trail |
+| Files (PDF, screenshots) | Vercel Blob | URLs stored on Neo4j nodes |
 
-Reasoning happens in **OpenClaw + Venice** (separate repo). JobClaw stores outputs only.
+Reasoning happens in **OpenClaw + Venice** (separate repo) with **agentic RAG** against Neo4j via `jobclaw` `/api/rag/*`. JobClaw stores outputs and serves graph context only.
 
 ---
 
@@ -167,10 +182,12 @@ Reasoning happens in **OpenClaw + Venice** (separate repo). JobClaw stores outpu
 - RetroUI landing + dual-login page
 - Web3Auth-first onboarding + MetaMask upgrade path
 - Smart Accounts Kit + ERC-7715 permissions onboarding
-- Convex schema, queries, mutations, actions, file storage, crons
+- Neo4j graph schema, Cypher repositories, constraints (`lib/neo4j/`) — **all website pages read from graph**
+- **Agentic RAG API** (`lib/rag/`, `app/api/rag/*`) for OpenClaw Venice tool calls
+- Vercel Blob for resume, cover letter, screenshot files
 - x402 middleware on hunt/apply/analyze-url routes
 - 1Shot relayer for 7702 upgrade + 7710 execution + webhook status
-- OpenClaw client (wake + rank via Venice)
+- OpenClaw client (wake + rank via Venice + **agentic RAG** from Neo4j)
 - Exa job discovery + LinkedIn search/apply (Browserbase)
 - Brave Search API for user-pasted job URL analysis
 - Venice resume + cover letter personalization per job
@@ -213,7 +230,7 @@ A developer or technical job seeker at a hackathon demo who:
 - At least one x402 payment settles with tx hash on dashboard
 - At least one live or pre-seeded application with screenshot
 - OpenClaw sandbox pre-warmed before judging
-- Convex realtime logs update during hunt
+- SWR-polled agent logs update during hunt
 
 ---
 

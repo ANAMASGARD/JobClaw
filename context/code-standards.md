@@ -1,8 +1,8 @@
 # Code Standards
 
-> **Purpose:** How to write JobClaw code — TypeScript, Next.js 16, Convex, API routes, automation, logging.  
+> **Purpose:** How to write JobClaw code — TypeScript, Next.js 16, **Neo4j**, API routes, logging.  
 > **Read when:** Every implementation session, before writing or reviewing code.  
-> **Schema & flows:** `architecture.md` · **Per-library API:** `library-docs.md` · **Glossary:** `context/README.md`
+> **Graph model:** `architecture.md` · **Per-library API:** `library-docs.md` · **Glossary:** `context/README.md`
 
 Implementation rules for JobClaw. Follow in every session without exception.
 
@@ -11,13 +11,14 @@ Implementation rules for JobClaw. Follow in every session without exception.
 ## Engineering Mindset
 
 - **Demo-first** — every feature must be showable to judges
-- **Read context files first** — never assume InsForge/JobPilot patterns still apply
-- **Web3Auth first, MetaMask second** — onboard users with Web3Auth (social login, resume, preferences); then prompt MetaMask connect + Smart Accounts Kit for hackathon onchain features
-- **MetaMask path is prize-critical** — demo video must show MetaMask SDK + Smart Accounts Kit; Web3Auth is the onboarding ramp, not a substitute for delegation
-- **LinkedIn + official URLs allowed** — job search via LinkedIn/Exa and apply via Browserbase (JobPilot-style) is in scope
-- **Personalize before apply** — Venice tailors resume + cover letter per job before Stagehand fills the form
-- **Convex owns state** — thin API routes, fat Convex actions
-- **Failures are logged** — append to `agentRuns.logs`, never crash silently
+- **Neo4j is required** — graph database for all state; **never use Convex**
+- **Web3Auth first, MetaMask second** — onboard with social login; upgrade for onchain features
+- **MetaMask path is prize-critical** — demo must show Smart Accounts Kit
+- **LinkedIn + official URLs allowed** — Browserbase apply is in scope
+- **Personalize before apply** — Venice tailors resume + cover letter per job
+- **Neo4j owns graph state** — powers **every website page** + agent data; Vercel Blob owns files; thin API routes; fat `lib/jobs/`
+- **Agentic RAG** — OpenClaw retrieves via `/api/rag/*`; implement queries in `lib/rag/`, never expose driver to OpenClaw
+- **Failures are logged** — append `LogEntry` nodes, never crash silently
 
 ---
 
@@ -34,9 +35,10 @@ Implementation rules for JobClaw. Follow in every session without exception.
 
 - App Router only
 - Server Components by default
-- `"use client"` only when needed: hooks, browser APIs, wagmi, Web3Auth, Convex `useQuery`
+- `"use client"` only when needed: hooks, browser APIs, wagmi, Web3Auth, SWR polling
 - Route handlers in `app/api/` — thin wrappers only
-- Long-running work in **Convex actions**, not API routes
+- Long-running work in **`lib/jobs/`**, not inline in route handlers
+- **Never import `lib/neo4j/` in client components**
 - Read `node_modules/next/dist/docs/` before implementing Next.js features
 
 ---
@@ -46,46 +48,54 @@ Implementation rules for JobClaw. Follow in every session without exception.
 - Folders: kebab-case
 - Components: PascalCase (`LiveLogDrawer.tsx`)
 - Utilities: camelCase (`exa-search.ts`)
-- Convex files: camelCase (`jobHunt.ts`)
+- Neo4j repositories: camelCase (`agentRuns.ts`) in `lib/neo4j/repositories/`
+- Job pipelines: camelCase (`jobHunt.ts`) in `lib/jobs/`
 - API routes: always `route.ts`
 - One component per file; named exports only
 
 ---
 
-## Component Structure
+## Neo4j Patterns
 
 ```typescript
-"use client"; // only if needed
+// lib/neo4j/repositories/users.ts
+import { withSession } from "../client";
 
-import { Button } from "@/components/retroui/Button";
-
-type Props = {
-  runId: string;
-};
-
-export function LiveLogDrawer({ runId }: Props) {
-  // hooks, handlers, return JSX
+export async function upsertFromWeb3Auth(input: Web3AuthUserInput) {
+  return withSession(async (session) => {
+    await session.run(`
+      MERGE (u:User {web3authSub: $web3authSub})
+      ON CREATE SET u.id = randomUUID(), u.createdAt = timestamp()
+      SET u.email = $email, u.authMethod = 'web3auth', u.onboardingStep = 'resume'
+      RETURN u
+    `, input);
+  });
 }
 ```
 
-- Use **RetroUI** components for new UI (`@/components/retroui/*`)
-- No inline styles — Tailwind + CSS variables from `ui-tokens.md`
-- No hardcoded hex values
+- **Repositories** — all Cypher in `lib/neo4j/repositories/`
+- **Sessions** — always close via `withSession` helper
+- **Scope** — every query starts with `MATCH (u:User {id: $userId})`
+- **Logs** — CREATE new `LogEntry` nodes; never UPDATE log arrays
+- **IDs** — use `randomUUID()` for node ids
 
 ---
 
-## Auth Flow
+## Live UI (SWR polling)
 
-```
-Web3Auth social login → resume + preferences (/onboarding)
-     → MetaMask connect + SIWE (/onboarding/connect-wallet)
-     → Smart Accounts Kit + ERC-7715 (/onboarding/permissions)
-     → full autonomous features
+```typescript
+"use client";
+import useSWR from "swr";
+
+const { data: run } = useSWR(
+  runId ? `/api/agent-runs/${runId}` : null,
+  fetcher,
+  { refreshInterval: runId ? 2000 : 0 }
+);
 ```
 
-- Web3Auth session is valid for onboarding and browsing
-- x402 hunt/apply requires linked MetaMask wallet + active delegation
-- Never skip MetaMask upgrade in the prize demo after showing Web3Auth onboarding
+- Poll agent runs during active hunts (~2s)
+- No Neo4j driver on client — API routes only
 
 ---
 
@@ -93,13 +103,12 @@ Web3Auth social login → resume + preferences (/onboarding)
 
 ```typescript
 // app/api/jobs/hunt/route.ts
-import { NextRequest, NextResponse } from "next/server";
-
 export async function POST(req: NextRequest) {
   try {
-    // verify session
-    // check x402 payment header OR return 402
-    // schedule Convex action — do not run hunt inline
+    // verify session → get userId
+    // check x402 OR return 402
+    // CREATE AgentRun in Neo4j
+    // void jobHunt({ runId, userId }) — do not await full pipeline
     return NextResponse.json({ success: true, runId });
   } catch (error) {
     console.error("[jobs/hunt]", error);
@@ -111,84 +120,43 @@ export async function POST(req: NextRequest) {
 - Every route has try/catch
 - Log prefix: `[route/path]`
 - Return `{ success: boolean, data?: T, error?: string }`
-- Max duration 5 min on Hobby — never run Browserbase in route handler
+- Never run Browserbase inline in route handler
 
 ---
 
-## Convex Patterns
+## Automation / Jobs
 
 ```typescript
-// convex/applications.ts
-import { query, mutation } from "./_generated/server";
-import { v } from "convex/values";
-
-export const listByUser = query({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await getAuthenticatedUserId(ctx);
-    return await ctx.db
-      .query("applications")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
-  },
-});
-```
-
-- **Queries** — reads, realtime UI (`useQuery`)
-- **Mutations** — writes, user-triggered
-- **Actions** — external API calls (OpenClaw, Exa, Browserbase, 1Shot)
-- **Crons** — daily status checks (prefer Convex crons over Vercel cron on Hobby)
-- Always authenticate and scope to user
-- Append agent logs — never overwrite log arrays
-
----
-
-## Automation Code
-
-```typescript
-// lib/automation/apply-pipeline.ts
-export async function applyToJob(/* ... */): Promise<ApplyResult> {
+// lib/jobs/jobHunt.ts
+export async function jobHunt(params: JobHuntParams) {
   try {
-    // 1. Brave Search — company + role context (optional enrichment)
-    // 2. Browserbase + Stagehand — open job URL, extract posting
-    // 3. Venice via OpenClaw — match score + personalized resume + cover letter
-    // 4. Stagehand — fill form with tailored content, upload resume PDF
-    return { success: true, screenshotStorageId, coverLetterStorageId };
+    await agentRunsRepo.appendLog(params.runId, { phase: "exa_search", message: "..." });
+    // ... pipeline
   } catch (error) {
-    return { success: false, error: String(error) };
-  } finally {
-    await stagehand.close();
+    await agentRunsRepo.appendLog(params.runId, { phase: "error", level: "error", message: String(error) });
   }
 }
 ```
 
-- Every automation function returns `{ success: boolean, error?: string }`
-- Always close Browserbase sessions in `finally`
-- Venice as LLM for Stagehand and personalization — not OpenAI
-- **Brave Search** runs before or alongside Browserbase when analyzing a user-supplied URL
-- **LinkedIn, Greenhouse, Lever, and direct company career URLs** are all valid apply targets
-- Store personalized resume + cover letter in Convex file storage before form fill
-- Never import from `components/` or `app/`
+- Called from API routes asynchronously
+- Venice as LLM — not OpenAI
+- Store file URLs on Neo4j nodes after Vercel Blob upload
 
 ---
 
 ## Onchain / x402
 
-- x402 middleware returns proper 402 + `Payment-Required` header
-- Never log private keys, session secrets, or full payment headers
-- Every settled payment writes to `x402Payments` AND `onchainLogs`
-- Prefer 1Shot webhook for tx status over polling
+- Every settled payment → `X402Payment` + `OnchainLog` nodes in Neo4j
+- Prefer 1Shot webhook for tx status
 
 ---
 
 ## Agent Run Logging
 
-Append structured log entries:
-
 ```typescript
 {
   timestamp: Date.now(),
-  phase: "venice_rank" | "exa_search" | "brave_search" | "url_analyze" | "personalize" | "x402_payment" | "browserbase_apply" | ...,
+  phase: "venice_rank" | "exa_search" | "brave_search" | "personalize" | "x402_payment" | "browserbase_apply" | ...,
   message: string,
   level?: "info" | "success" | "warning" | "error",
   txHash?: string,
@@ -196,58 +164,44 @@ Append structured log entries:
 }
 ```
 
-Judges must understand logs in seconds.
+Stored as `LogEntry` nodes linked to `AgentRun`.
 
 ---
 
 ## Environment Variables
 
-Never hardcode secrets. Key variables — see `architecture.md` for full list.
-
 | Variable | Context |
 |----------|---------|
-| `NEXT_PUBLIC_CONVEX_URL` | Client + server |
+| `NEO4J_URI` | Aura connection string |
+| `NEO4J_USERNAME` | `neo4j` |
+| `NEO4J_PASSWORD` | Aura password |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob |
 | `NEXT_PUBLIC_WEB3AUTH_CLIENT_ID` | Web3Auth modal |
 | `SESSION_SECRET` | Cookie signing |
-| `VENICE_API_KEY` | Stagehand + Venice API |
-| `BRAVE_SEARCH_API_KEY` | Job/company context when user pastes a URL |
+| `VENICE_API_KEY` | Stagehand + Venice |
+| `BRAVE_SEARCH_API_KEY` | URL enrichment |
 | `OPENCLAW_BASE_URL` | Agent backend |
 | `ONESHOT_API_KEY` | Relayer + x402 |
 
-`NEXT_PUBLIC_` prefix = browser-safe only.
-
----
-
-## Import Aliases
-
-Always use `@/` — never deep relative imports.
-
----
-
-## Comments
-
-- Self-explanatory code preferred
-- Comments only for non-obvious onchain/delegation logic
-- No TODO comments in committed code
+Full list: `architecture.md`. Never use `NEXT_PUBLIC_CONVEX_URL`.
 
 ---
 
 ## Approved Dependencies
 
-Add new packages only with reason. Current/planned:
-
-- `convex` — database + actions
-- `@web3auth/modal`, `@web3auth/base` — Web2 login
+- `neo4j-driver` — **graph database (required)**
+- `@vercel/blob` — file storage
+- `swr` — client polling for agent runs
+- `@web3auth/modal`, `@web3auth/base` — Web3Auth
 - `wagmi`, `viem`, `@tanstack/react-query` — MetaMask
-- `@metamask/smart-accounts-kit` — ERC-7715 / smart accounts
-- `@browserbasehq/stagehand`, `@browserbasehq/sdk` — browser automation (LinkedIn, Greenhouse, direct URLs)
-- `exa-js` — job discovery search
-- Brave Search API (REST via `fetch`) — enrich user-pasted job URLs with company/role context
+- `@metamask/smart-accounts-kit` — ERC-7715
+- `@browserbasehq/stagehand`, `@browserbasehq/sdk` — automation
+- `exa-js` — job discovery
 - `jose` — JWT verification
 - `zod` — validation
-- RetroUI components via shadcn registry (`@retroui/*`)
+- RetroUI via `@retroui/*`
 
-**Do not add:** `@insforge/ssr`, `posthog-js`, `openai` (as primary), `pdf-parse`, `@react-pdf/renderer`, Adzuna client.
+**Do not add:** `convex`, `@insforge/ssr`, `posthog-js`, `openai` (as primary), Adzuna client.
 
 ---
 
